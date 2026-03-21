@@ -1,0 +1,30 @@
+# Rust
+src-tauri/target/
+target/
+
+# Frontend
+node_modules/
+dist/
+
+# Environment
+.env
+.env.*
+
+.claude/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Tauri
+src-tauri/gen/
+
+# Sample vault (local testing data)
+sample-vault/
