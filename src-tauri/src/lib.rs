@@ -191,8 +191,6 @@ pub fn run() {
             commands::media::reveal_media,
             commands::media::copy_media_file,
             commands::media::copy_media_path,
-            commands::descriptions::get_description,
-            commands::descriptions::set_description,
             commands::descriptions::get_media_for_description,
             commands::descriptions::get_media_index,
             commands::descriptions::get_filtered_media_ids,

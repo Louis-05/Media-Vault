@@ -4,7 +4,6 @@
     getMediaForDescription,
     getFilteredMediaIds,
     getMediaById,
-    setDescription,
     getMediaPath,
     getMediaIndex,
     toMediaUrl,
@@ -153,7 +152,14 @@
   async function saveNow() {
     if (!data || descriptionText === lastSavedText) return;
     try {
-      await setDescription(data.media.id, descriptionText);
+      // Update the description tag within mediaTags (same path as all other tags)
+      const descTag = mediaTags.find((t) => t.key === "description");
+      if (descTag) {
+        descTag.value = descriptionText;
+      } else {
+        mediaTags = [...mediaTags, { key: "description", value: descriptionText }];
+      }
+      await setMediaTags(data.media.id, mediaTags);
       lastSavedText = descriptionText;
       data.media.has_description = true;
       data.description = descriptionText;

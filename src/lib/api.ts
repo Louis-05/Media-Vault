@@ -136,19 +136,6 @@ export async function searchMedia(
   return invoke("search_media", { query, offset, limit });
 }
 
-export async function getDescription(
-  mediaId: string
-): Promise<string | null> {
-  return invoke("get_description", { mediaId });
-}
-
-export async function setDescription(
-  mediaId: string,
-  description: string
-): Promise<void> {
-  return invoke("set_description", { mediaId, description });
-}
-
 export async function getMediaForDescription(
   index: number,
   filterMissingDesc: boolean,

@@ -42,17 +42,6 @@ pub fn find_media_by_checksum(conn: &Connection, checksum: &str) -> rusqlite::Re
     .optional()
 }
 
-/// Helper to fetch description from tags table for a media_id.
-fn fetch_description(conn: &Connection, media_id: &str) -> Option<String> {
-    conn.query_row(
-        "SELECT value FROM tags WHERE media_id = ?1 AND key = 'description' LIMIT 1",
-        params![media_id],
-        |row| row.get::<_, String>(0),
-    )
-    .optional()
-    .unwrap_or(None)
-}
-
 pub fn get_media_list(
     conn: &Connection,
     offset: u32,
@@ -105,30 +94,6 @@ pub fn get_media_by_id(conn: &Connection, media_id: &str) -> rusqlite::Result<Op
 
 pub fn delete_media(conn: &Connection, media_id: &str) -> rusqlite::Result<()> {
     conn.execute("DELETE FROM media WHERE id = ?1", params![media_id])?;
-    Ok(())
-}
-
-// --- Description convenience (reads/writes the "description" tag) ---
-
-pub fn get_description(conn: &Connection, media_id: &str) -> rusqlite::Result<Option<String>> {
-    conn.query_row(
-        "SELECT value FROM tags WHERE media_id = ?1 AND key = 'description' LIMIT 1",
-        params![media_id],
-        |row| row.get::<_, String>(0),
-    )
-    .optional()
-}
-
-pub fn set_description(conn: &Connection, media_id: &str, description: &str) -> rusqlite::Result<()> {
-    // Remove old description tags, insert new one
-    conn.execute(
-        "DELETE FROM tags WHERE media_id = ?1 AND key = 'description'",
-        params![media_id],
-    )?;
-    conn.execute(
-        "INSERT INTO tags (media_id, key, value) VALUES (?1, 'description', ?2)",
-        params![media_id, description],
-    )?;
     Ok(())
 }
 
@@ -205,30 +170,29 @@ pub fn get_media_for_description(
     let actual_index = index.min(filtered_count - 1);
 
     let list_sql = format!(
-        "SELECT m.id, m.extension, m.media_type, m.codec, m.duration
-         FROM media m WHERE {where_clause}
+        "SELECT m.id, m.extension, m.media_type, m.codec, m.duration, t.value
+         FROM media m
+         LEFT JOIN tags t ON m.id = t.media_id AND t.key = 'description'
+         WHERE {where_clause}
          ORDER BY m.imported_at ASC LIMIT 1 OFFSET ?1"
     );
 
     let result = conn.query_row(&list_sql, params![actual_index], |row| {
-        let media_id: String = row.get(0)?;
-        Ok((media_id, row.get(1)?, row.get(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<f64>>(4)?))
+        let description: Option<String> = row.get(5)?;
+        Ok(MediaInfo {
+            id: row.get(0)?,
+            extension: row.get(1)?,
+            media_type: row.get(2)?,
+            codec: row.get(3)?,
+            has_description: description.is_some(),
+            description,
+            duration: row.get(4)?,
+        })
     })?;
 
-    let (media_id, extension, media_type, codec, duration): (String, String, String, Option<String>, Option<f64>) = result;
-    let description = fetch_description(conn, &media_id);
-
     Ok(Some(DescriptionPageData {
-        media: MediaInfo {
-            id: media_id,
-            extension,
-            media_type,
-            codec,
-            has_description: description.is_some(),
-            description: description.clone(),
-            duration,
-        },
-        description,
+        description: result.description.clone(),
+        media: result,
         current_index: actual_index,
         total_count: filtered_count,
     }))
