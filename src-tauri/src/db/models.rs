@@ -8,6 +8,7 @@ pub struct MediaInfo {
     pub codec: Option<String>,
     pub has_description: bool,
     pub description: Option<String>,
+    pub duration: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,4 +29,16 @@ pub struct DescriptionPageData {
 pub struct VaultInfo {
     pub path: String,
     pub media_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TagInfo {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TagKeyInfo {
+    pub key: String,
+    pub usage_count: u32,
 }

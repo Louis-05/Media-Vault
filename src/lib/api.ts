@@ -12,6 +12,7 @@ export interface MediaInfo {
   codec: string | null;
   has_description: boolean;
   description: string | null;
+  duration: number | null;
 }
 
 export interface SearchResult {
@@ -28,6 +29,10 @@ export interface DescriptionPageData {
 
 export async function getLoadingStatus(): Promise<string> {
   return invoke("get_loading_status");
+}
+
+export async function getBuildInfo(): Promise<[string, string]> {
+  return invoke("get_build_info");
 }
 
 export async function createVault(path: string): Promise<VaultInfo> {
@@ -54,8 +59,20 @@ export async function setZoomLevel(level: number): Promise<void> {
   return invoke("set_zoom_level", { level });
 }
 
-export async function refreshVault(): Promise<void> {
-  return invoke("refresh_vault");
+export async function deepRefresh(): Promise<void> {
+  return invoke("deep_refresh");
+}
+
+export async function pauseProcessing(): Promise<void> {
+  return invoke("pause_processing");
+}
+
+export async function resumeProcessing(): Promise<void> {
+  return invoke("resume_processing");
+}
+
+export async function getProcessedCount(): Promise<number> {
+  return invoke("get_processed_count");
 }
 
 export async function importMedia(filePaths: string[]): Promise<void> {
@@ -113,9 +130,10 @@ export async function copyMediaPath(mediaId: string): Promise<void> {
 
 export async function searchMedia(
   query: string,
-  limit: number = 50
+  offset: number = 0,
+  limit: number = 200,
 ): Promise<SearchResult[]> {
-  return invoke("search_media", { query, limit });
+  return invoke("search_media", { query, offset, limit });
 }
 
 export async function getDescription(
@@ -133,14 +151,71 @@ export async function setDescription(
 
 export async function getMediaForDescription(
   index: number,
-  filterMissing: boolean
+  filterMissingDesc: boolean,
+  filterMissingTags: boolean,
 ): Promise<DescriptionPageData | null> {
-  return invoke("get_media_for_description", { index, filterMissing });
+  return invoke("get_media_for_description", { index, filterMissingDesc, filterMissingTags });
 }
 
 export async function getMediaIndex(
   mediaId: string,
-  filterMissing: boolean
+  filterMissingDesc: boolean,
+  filterMissingTags: boolean,
 ): Promise<number | null> {
-  return invoke("get_media_index", { mediaId, filterMissing });
+  return invoke("get_media_index", { mediaId, filterMissingDesc, filterMissingTags });
+}
+
+export async function getFilteredMediaIds(
+  filterMissingDesc: boolean,
+  filterMissingTags: boolean,
+): Promise<string[]> {
+  return invoke("get_filtered_media_ids", { filterMissingDesc, filterMissingTags });
+}
+
+export async function getMediaById(mediaId: string): Promise<MediaInfo | null> {
+  return invoke("get_media_by_id", { mediaId });
+}
+
+export async function getMissingCounts(): Promise<[number, number, number]> {
+  return invoke("get_missing_counts");
+}
+
+// --- Tags ---
+
+export interface TagInfo {
+  key: string;
+  value: string;
+}
+
+export interface TagKeyInfo {
+  key: string;
+  usage_count: number;
+}
+
+export async function getMediaTags(mediaId: string): Promise<TagInfo[]> {
+  return invoke("get_media_tags", { mediaId });
+}
+
+export async function setMediaTags(mediaId: string, tags: TagInfo[]): Promise<void> {
+  return invoke("set_media_tags", { mediaId, tags });
+}
+
+export async function getAllTagKeys(): Promise<TagKeyInfo[]> {
+  return invoke("get_all_tag_keys");
+}
+
+export async function getTagValues(key: string): Promise<string[]> {
+  return invoke("get_tag_values", { key });
+}
+
+export async function createTagKey(key: string): Promise<void> {
+  return invoke("create_tag_key", { key });
+}
+
+export async function renameTagKey(oldKey: string, newKey: string): Promise<void> {
+  return invoke("rename_tag_key", { oldKey, newKey });
+}
+
+export async function deleteTagKey(key: string): Promise<void> {
+  return invoke("delete_tag_key", { key });
 }

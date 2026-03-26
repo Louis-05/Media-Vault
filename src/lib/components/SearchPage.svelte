@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { currentPage, currentVault, mediaList, editMediaId, isDraggingOut } from "../stores/vault";
+  import { currentPage, currentVault, mediaList, editMediaId, isDraggingOut, loadingStatus, processedCount, autoSearch } from "../stores/vault";
   import { get } from "svelte/store";
-  import { getMediaList, searchMedia, importMedia, openVault, createVault, refreshVault } from "../api";
+  import { getMediaList, searchMedia, importMedia, openVault, createVault, getProcessedCount, pauseProcessing, resumeProcessing } from "../api";
+  import type { MediaInfo } from "../api";
   import { open } from "@tauri-apps/plugin-dialog";
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
@@ -11,15 +12,17 @@
   let searchQuery = $state("");
   let searchResults = $state<any[]>([]);
   let isSearching = $state(false);
-  let searchTimeout: ReturnType<typeof setTimeout> | undefined;
   let notification = $state<string | null>(null);
   let notificationTimeout: ReturnType<typeof setTimeout> | undefined;
   let hasMore = $state(true);
+  let searchHasMore = $state(true);
   let loadingMore = $state(false);
+  let paused = $state(false);
   const PAGE_SIZE = 200;
 
   onMount(() => {
     loadMedia();
+    loadProcessedCount();
 
     // Listen for drag-and-drop file imports
     const unlistenDrop = listen<{ paths: string[] }>("tauri://drag-drop", async (event) => {
@@ -36,16 +39,19 @@
       }
     });
 
-    // Refresh grid when media changes (imports, deletes, refresh)
-    const unlistenChanged = listen("media-changed", async () => {
-      await loadMedia();
-      if (searchQuery.trim()) {
-        try {
-          const results = await searchMedia(searchQuery, 50);
-          searchResults = results;
-        } catch (e) {
-          console.error("Search re-run failed:", e);
-        }
+    // Live-add newly processed media to the grid
+    const unlistenProcessed = listen<MediaInfo>("media-processed", async (event) => {
+      const media = event.payload;
+
+      // Always fetch real count from backend to avoid drift
+      await loadProcessedCount();
+
+      if (!searchQuery.trim()) {
+        // Append to end of grid only if not already present
+        mediaList.update((list) => {
+          if (list.some((m) => m.id === media.id)) return list;
+          return [...list, media];
+        });
       }
     });
 
@@ -58,12 +64,28 @@
       notificationTimeout = setTimeout(() => { notification = null; }, 4000);
     });
 
+    // Listen for media-changed (from deep refresh cleanup)
+    const unlistenChanged = listen("media-changed", async () => {
+      await loadMedia();
+      await loadProcessedCount();
+    });
+
     return () => {
       unlistenDrop.then((fn) => fn());
-      unlistenChanged.then((fn) => fn());
+      unlistenProcessed.then((fn) => fn());
       unlistenDuplicates.then((fn) => fn());
+      unlistenChanged.then((fn) => fn());
     };
   });
+
+  async function loadProcessedCount() {
+    try {
+      const count = await getProcessedCount();
+      processedCount.set(count);
+    } catch (e) {
+      console.error("Failed to load processed count:", e);
+    }
+  }
 
   async function loadMedia() {
     try {
@@ -89,26 +111,38 @@
     loadingMore = false;
   }
 
-  function handleSearch(query: string) {
+  async function handleSearch(query: string) {
     searchQuery = query;
-    if (searchTimeout) clearTimeout(searchTimeout);
 
     if (!query.trim()) {
       searchResults = [];
       isSearching = false;
+      searchHasMore = true;
       return;
     }
 
     isSearching = true;
-    searchTimeout = setTimeout(async () => {
-      try {
-        const results = await searchMedia(query, 50);
-        searchResults = results;
-      } catch (e) {
-        console.error("Search failed:", e);
-      }
-      isSearching = false;
-    }, 300);
+    try {
+      const results = await searchMedia(query, 0, PAGE_SIZE);
+      searchResults = results;
+      searchHasMore = results.length >= PAGE_SIZE;
+    } catch (e) {
+      console.error("Search failed:", e);
+    }
+    isSearching = false;
+  }
+
+  async function loadMoreSearch() {
+    if (loadingMore || !searchHasMore || !searchQuery.trim()) return;
+    loadingMore = true;
+    try {
+      const results = await searchMedia(searchQuery, searchResults.length, PAGE_SIZE);
+      searchResults = [...searchResults, ...results];
+      searchHasMore = results.length >= PAGE_SIZE;
+    } catch (e) {
+      console.error("Search load more failed:", e);
+    }
+    loadingMore = false;
   }
 
   async function handleOpenFolder() {
@@ -123,21 +157,9 @@
         currentVault.set(info);
       }
       await loadMedia();
+      await loadProcessedCount();
     } catch (e) {
       console.error("Failed to open vault:", e);
-    }
-  }
-
-  async function handleRefresh() {
-    try {
-      await refreshVault();
-      await loadMedia();
-      if (searchQuery.trim()) {
-        const results = await searchMedia(searchQuery, 50);
-        searchResults = results;
-      }
-    } catch (e) {
-      console.error("Refresh failed:", e);
     }
   }
 
@@ -146,15 +168,30 @@
     currentPage.set("descriptions");
   }
 
+  function goToSettings() {
+    currentPage.set("settings");
+  }
+
   function handleEditDescription(mediaId: string) {
     editMediaId.set(mediaId);
     currentPage.set("descriptions");
+  }
+
+  async function togglePause() {
+    if (paused) {
+      await resumeProcessing();
+      paused = false;
+    } else {
+      await pauseProcessing();
+      paused = true;
+    }
   }
 
   $effect(() => {
     // Reload media when vault changes
     if ($currentVault) {
       loadMedia();
+      loadProcessedCount();
     }
   });
 </script>
@@ -164,15 +201,28 @@
     <div class="header-left">
       <div class="menu">
         <button class="secondary" onclick={handleOpenFolder}>Open Folder</button>
-        <button class="secondary" onclick={handleRefresh} title="Refresh">Refresh</button>
         <button class="secondary" onclick={goToDescriptions}>Descriptions</button>
+        <button class="secondary" onclick={() => currentPage.set("tags")}>Tags</button>
+        <button class="secondary" onclick={goToSettings}>Settings</button>
       </div>
     </div>
     <div class="header-center">
-      <SearchBar onSearch={handleSearch} />
+      <SearchBar onSearch={handleSearch} auto={$autoSearch} />
     </div>
-    <div class="header-right"></div>
+    <div class="header-right">
+      <span class="media-count">{$processedCount} media</span>
+    </div>
   </header>
+
+  {#if $loadingStatus}
+    <div class="progress-bar">
+      <div class="progress-spinner"></div>
+      <span>{$loadingStatus}</span>
+      <button class="pause-btn" onclick={togglePause}>
+        {paused ? "Resume" : "Pause"}
+      </button>
+    </div>
+  {/if}
 
   {#if notification}
     <div class="notification">{notification}</div>
@@ -180,7 +230,7 @@
 
   <main>
     {#if searchQuery.trim() && searchResults.length > 0}
-      <MediaGrid items={searchResults.map((r) => r.media)} scores={Object.fromEntries(searchResults.map((r) => [r.media.id, r.score]))} onMediaDeleted={loadMedia} onEditDescription={handleEditDescription} />
+      <MediaGrid items={searchResults.map((r) => r.media)} scores={Object.fromEntries(searchResults.map((r) => [r.media.id, r.score]))} onMediaDeleted={() => { handleSearch(searchQuery); loadMedia(); loadProcessedCount(); }} onEditDescription={handleEditDescription} onLoadMore={loadMoreSearch} hasMore={searchHasMore} />
     {:else if searchQuery.trim() && !isSearching}
       <div class="empty">No results found</div>
     {:else}
@@ -217,7 +267,16 @@
 
   .header-right {
     flex-shrink: 0;
-    width: 200px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    min-width: 100px;
+  }
+
+  .media-count {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    white-space: nowrap;
   }
 
   .menu {
@@ -237,6 +296,47 @@
     justify-content: center;
     height: 200px;
     color: var(--text-muted);
+  }
+
+  .progress-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 16px;
+    background-color: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+  }
+
+  .progress-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+  }
+
+  .pause-btn {
+    margin-left: auto;
+    padding: 2px 10px;
+    font-size: 0.8rem;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-muted);
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  .pause-btn:hover {
+    background: var(--bg-surface);
+    color: var(--text);
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 
   .notification {

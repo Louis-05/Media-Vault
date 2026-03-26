@@ -25,11 +25,29 @@ fn resolve_exe(name: &str) -> std::ffi::OsString {
 }
 
 fn ffmpeg() -> Command {
-    Command::new(resolve_exe("ffmpeg"))
+    let cmd = Command::new(resolve_exe("ffmpeg"));
+    #[cfg(windows)]
+    {
+        let mut cmd = cmd;
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        return cmd;
+    }
+    #[cfg(not(windows))]
+    cmd
 }
 
 fn ffprobe() -> Command {
-    Command::new(resolve_exe("ffprobe"))
+    let cmd = Command::new(resolve_exe("ffprobe"));
+    #[cfg(windows)]
+    {
+        let mut cmd = cmd;
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        return cmd;
+    }
+    #[cfg(not(windows))]
+    cmd
 }
 
 /// Ensure the previews directory exists and return its path.

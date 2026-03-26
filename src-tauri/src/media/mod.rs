@@ -4,6 +4,19 @@ use std::path::Path;
 use std::process::Command;
 use uuid::Uuid;
 
+fn ffprobe_cmd() -> Command {
+    let cmd = Command::new("ffprobe");
+    #[cfg(windows)]
+    {
+        let mut cmd = cmd;
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        return cmd;
+    }
+    #[cfg(not(windows))]
+    cmd
+}
+
 pub struct ImportedMedia {
     pub id: String,
     pub extension: String,
@@ -11,6 +24,7 @@ pub struct ImportedMedia {
     pub codec: Option<String>,
     pub file_size: Option<u64>,
     pub checksum: String,
+    pub duration: Option<f64>,
 }
 
 pub fn compute_checksum(path: &Path) -> Result<String, String> {
@@ -32,7 +46,7 @@ pub fn detect_codec(file_path: &Path) -> Option<String> {
     let input = file_path.to_str()?;
 
     // Try video stream first
-    let output = Command::new("ffprobe")
+    let output = ffprobe_cmd()
         .args([
             "-v", "error",
             "-select_streams", "v:0",
@@ -49,7 +63,7 @@ pub fn detect_codec(file_path: &Path) -> Option<String> {
     }
 
     // Fall back to audio stream
-    let output = Command::new("ffprobe")
+    let output = ffprobe_cmd()
         .args([
             "-v", "error",
             "-select_streams", "a:0",
@@ -62,6 +76,23 @@ pub fn detect_codec(file_path: &Path) -> Option<String> {
 
     let codec = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if codec.is_empty() { None } else { Some(codec) }
+}
+
+/// Detect duration in seconds using ffprobe.
+pub fn detect_duration(file_path: &Path) -> Option<f64> {
+    let input = file_path.to_str()?;
+    let output = ffprobe_cmd()
+        .args([
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            input,
+        ])
+        .output()
+        .ok()?;
+
+    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    s.parse::<f64>().ok()
 }
 
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "bmp", "webp", "tiff", "tif", "avif"];
@@ -114,6 +145,12 @@ pub fn import_file(vault_path: &Path, source_path: &str) -> Result<ImportedMedia
 
     let codec = detect_codec(&dest);
 
+    let duration = if media_type == "video" || media_type == "audio" || media_type == "gif" {
+        detect_duration(&dest)
+    } else {
+        None
+    };
+
     Ok(ImportedMedia {
         id,
         extension,
@@ -121,6 +158,7 @@ pub fn import_file(vault_path: &Path, source_path: &str) -> Result<ImportedMedia
         codec,
         file_size,
         checksum,
+        duration,
     })
 }
 
@@ -164,6 +202,12 @@ pub fn rename_to_uuid(vault_path: &Path, filename: &str) -> Result<Option<Import
 
     let codec = detect_codec(&new_path);
 
+    let duration = if media_type == "video" || media_type == "audio" || media_type == "gif" {
+        detect_duration(&new_path)
+    } else {
+        None
+    };
+
     Ok(Some(ImportedMedia {
         id,
         extension,
@@ -171,5 +215,6 @@ pub fn rename_to_uuid(vault_path: &Path, filename: &str) -> Result<Option<Import
         codec,
         file_size: Some(metadata.len()),
         checksum,
+        duration,
     }))
 }

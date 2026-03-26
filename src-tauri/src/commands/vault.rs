@@ -1,12 +1,14 @@
 use crate::db::models::VaultInfo;
 use crate::db::{queries, schema};
-use crate::state::AppState;
+use crate::state::{AppState, WorkerMsg};
 use crate::watcher;
+use crate::worker;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use tauri::{AppHandle, Emitter, State};
+use std::sync::mpsc;
+use tauri::{AppHandle, Emitter, Manager, State};
 
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct Preferences {
@@ -69,142 +71,185 @@ fn save_last_vault(path: &str) {
     save_preferences(&prefs);
 }
 
-/// Scan for new files, clean ghosts, sync descriptions, generate previews.
-fn do_refresh(vault_path: &Path, app_handle: &AppHandle) {
-    // Clean up ghost entries
+/// Stop the current worker thread if one is running.
+fn stop_worker(state: &AppState) {
+    if let Some(tx) = state.worker_tx.lock().unwrap().take() {
+        let _ = tx.send(WorkerMsg::Stop);
+    }
+    *state.search_request_tx.lock().unwrap() = None;
+    *state.search_done_tx.lock().unwrap() = None;
+}
+
+/// Start a new worker thread for the given vault.
+fn start_worker(state: &AppState, vault_path: &Path, app_handle: &AppHandle, bootstrap_json: bool) {
+    let (worker_tx, worker_rx) = mpsc::channel::<WorkerMsg>();
+    let (search_req_tx, search_req_rx) = mpsc::channel::<()>();
+    let (search_done_tx, search_done_rx) = mpsc::channel::<()>();
+
+    *state.worker_tx.lock().unwrap() = Some(worker_tx);
+    *state.search_request_tx.lock().unwrap() = Some(search_req_tx);
+    *state.search_done_tx.lock().unwrap() = Some(search_done_tx);
+
+    let vault_path_owned = vault_path.to_path_buf();
+    let handle = app_handle.clone();
+    std::thread::spawn(move || {
+        worker::run_worker(vault_path_owned, handle, worker_rx, search_req_rx, search_done_rx, bootstrap_json);
+    });
+}
+
+/// Deep refresh: cleanup ghosts, detect stale media.
+/// File scanning is handled by the worker thread (one at a time).
+fn do_deep_refresh(vault_path: &Path, app_handle: &AppHandle) {
     match watcher::cleanup_missing_files(vault_path) {
         Ok(count) => {
             if count > 0 {
                 log::info!("Cleaned up {count} ghost entries");
+                let _ = app_handle.emit("media-changed", count);
             }
         }
         Err(e) => log::error!("Failed to clean up missing files: {e}"),
     }
 
-    // Scan for new files
-    match watcher::process_new_files(vault_path) {
+    match watcher::detect_stale_media(vault_path) {
         Ok(count) => {
             if count > 0 {
-                log::info!("Imported {count} new files");
-                let _ = app_handle.emit("media-changed", count);
+                log::info!("Found {count} stale media items to reprocess");
             }
         }
-        Err(e) => log::error!("Failed to scan for new files: {e}"),
-    }
-
-    // Sync descriptions from JSON
-    match watcher::sync_descriptions(vault_path, app_handle) {
-        Ok(count) => {
-            if count > 0 {
-                log::info!("Synced {count} descriptions from JSON");
-                let _ = app_handle.emit("media-changed", count);
-            }
-        }
-        Err(e) => log::error!("Failed to sync descriptions: {e}"),
-    }
-
-    // Generate missing previews
-    match watcher::generate_missing_previews(vault_path, app_handle) {
-        Ok(count) => {
-            if count > 0 {
-                log::info!("Generated {count} missing previews");
-                let _ = app_handle.emit("media-changed", count);
-            }
-        }
-        Err(e) => {
-            log::error!("Failed to generate missing previews: {e}");
-            crate::set_loading_status(app_handle, "");
-        }
+        Err(e) => log::error!("Failed to detect stale media: {e}"),
     }
 }
 
+
 #[tauri::command]
-pub fn create_vault(
-    state: State<AppState>,
+pub async fn create_vault(
     app_handle: AppHandle,
     path: String,
 ) -> Result<VaultInfo, String> {
-    let vault_path = Path::new(&path);
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<AppState>();
+        let vault_path = Path::new(&path);
 
-    let media_dir = vault_path.join("media");
-    fs::create_dir_all(&media_dir).map_err(|e| format!("Failed to create media dir: {e}"))?;
+        let media_dir = vault_path.join("media");
+        fs::create_dir_all(&media_dir).map_err(|e| format!("Failed to create media dir: {e}"))?;
 
-    let db_path = vault_path.join("vault.db");
-    let conn =
-        Connection::open(&db_path).map_err(|e| format!("Failed to create database: {e}"))?;
-    schema::initialize_db(&conn).map_err(|e| format!("Failed to initialize database: {e}"))?;
+        let db_path = vault_path.join("vault.db");
+        let conn = Connection::open(&db_path).map_err(|e| format!("Failed to create database: {e}"))?;
+        schema::initialize_db(&conn).map_err(|e| format!("Failed to initialize database: {e}"))?;
 
-    let info =
-        queries::get_vault_info(&conn, &path).map_err(|e| format!("Failed to get info: {e}"))?;
+        let info = queries::get_vault_info(&conn, &path).map_err(|e| format!("Failed to get info: {e}"))?;
 
-    *state.vault_path.lock().unwrap() = Some(vault_path.to_path_buf());
-    *state.db.lock().unwrap() = Some(conn);
+        *state.vault_path.lock().unwrap() = Some(vault_path.to_path_buf());
+        *state.db.lock().unwrap() = Some(conn);
 
-    save_last_vault(&path);
+        save_last_vault(&path);
+        start_worker(&state, vault_path, &app_handle, false);
 
-    Ok(info)
+        Ok(info)
+    })
+    .await
+    .map_err(|e| format!("{e}"))?
 }
 
 #[tauri::command]
-pub fn open_vault(
-    state: State<AppState>,
+pub async fn open_vault(
     app_handle: AppHandle,
     path: String,
 ) -> Result<VaultInfo, String> {
-    let vault_path = Path::new(&path);
-    let media_dir = vault_path.join("media");
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<AppState>();
+        let vault_path = Path::new(&path);
+        let media_dir = vault_path.join("media");
 
-    if !media_dir.exists() {
-        return Err("No media folder found — not a vault".to_string());
-    }
+        if !media_dir.exists() {
+            return Err("No media folder found — not a vault".to_string());
+        }
 
-    // Create DB if missing (descriptions are in JSON, everything else is regenerated)
-    let db_path = vault_path.join("vault.db");
-    let conn =
-        Connection::open(&db_path).map_err(|e| format!("Failed to open database: {e}"))?;
-    schema::initialize_db(&conn).map_err(|e| format!("Failed to initialize database: {e}"))?;
+        let db_path = vault_path.join("vault.db");
+        let db_is_fresh = !db_path.exists();
+        let conn = Connection::open(&db_path).map_err(|e| format!("Failed to open database: {e}"))?;
+        schema::initialize_db(&conn).map_err(|e| format!("Failed to initialize database: {e}"))?;
 
-    *state.vault_path.lock().unwrap() = Some(vault_path.to_path_buf());
-    *state.db.lock().unwrap() = Some(conn);
+        let info = queries::get_vault_info(&conn, &path).map_err(|e| format!("Failed to get info: {e}"))?;
 
-    save_last_vault(&path);
+        *state.vault_path.lock().unwrap() = Some(vault_path.to_path_buf());
+        *state.db.lock().unwrap() = Some(conn);
 
-    // Run refresh tasks in background
-    let vault_path_owned = vault_path.to_path_buf();
+        save_last_vault(&path);
+        start_worker(&state, vault_path, &app_handle, db_is_fresh);
+
+        // Run deep refresh in background, then wake the worker
+        let vault_path_owned = vault_path.to_path_buf();
+        let handle = app_handle.clone();
+        let worker_tx = state.worker_tx.lock().unwrap().clone();
+        std::thread::spawn(move || {
+            do_deep_refresh(&vault_path_owned, &handle);
+            if let Some(tx) = worker_tx {
+                let _ = tx.send(WorkerMsg::Wake);
+            }
+        });
+
+        Ok(info)
+    })
+    .await
+    .map_err(|e| format!("{e}"))?
+}
+
+#[tauri::command]
+pub async fn close_vault(app_handle: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<AppState>();
+        stop_worker(&state);
+        *state.db.lock().unwrap() = None;
+        *state.vault_path.lock().unwrap() = None;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("{e}"))?
+}
+
+#[tauri::command]
+pub async fn deep_refresh(app_handle: AppHandle) -> Result<(), String> {
+    let state = app_handle.state::<AppState>();
+    let vault_path = state.vault_path.lock().unwrap().clone().ok_or("No vault open")?;
+    let worker_tx = state.worker_tx.lock().unwrap().clone();
+
     let handle = app_handle.clone();
     std::thread::spawn(move || {
-        do_refresh(&vault_path_owned, &handle);
+        do_deep_refresh(&vault_path, &handle);
+        if let Some(tx) = worker_tx {
+            let _ = tx.send(WorkerMsg::Wake);
+        }
     });
 
-    let info = {
-        let db = state.db.lock().unwrap();
-        let conn = db.as_ref().ok_or("No database connection")?;
-        queries::get_vault_info(conn, &path).map_err(|e| format!("Failed to get info: {e}"))?
-    };
-
-    Ok(info)
+    Ok(())
 }
 
 #[tauri::command]
-pub fn close_vault(state: State<AppState>) -> Result<(), String> {
-    *state.db.lock().unwrap() = None;
-    *state.vault_path.lock().unwrap() = None;
+pub fn pause_processing(state: State<AppState>) -> Result<(), String> {
+    if let Some(ref tx) = *state.worker_tx.lock().unwrap() {
+        let _ = tx.send(WorkerMsg::Pause);
+    }
     Ok(())
 }
 
 #[tauri::command]
-pub fn refresh_vault(state: State<AppState>, app_handle: AppHandle) -> Result<(), String> {
-    let vault_path = state
-        .vault_path
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or("No vault open")?;
-
-    let handle = app_handle.clone();
-    std::thread::spawn(move || {
-        do_refresh(&vault_path, &handle);
-    });
-
+pub fn resume_processing(state: State<AppState>) -> Result<(), String> {
+    if let Some(ref tx) = *state.worker_tx.lock().unwrap() {
+        let _ = tx.send(WorkerMsg::Resume);
+    }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_processed_count(app_handle: AppHandle) -> Result<u32, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<AppState>();
+        let vault_path = state.vault_path.lock().unwrap().clone().ok_or("No vault open")?;
+        let conn = Connection::open(vault_path.join("vault.db"))
+            .map_err(|e| format!("DB error: {e}"))?;
+        queries::get_processed_count(&conn).map_err(|e| format!("Query failed: {e}"))
+    })
+    .await
+    .map_err(|e| format!("{e}"))?
 }

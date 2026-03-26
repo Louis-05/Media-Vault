@@ -1,72 +1,155 @@
 use crate::db::models::DescriptionPageData;
 use crate::db::queries;
-use crate::descriptions_file;
 use crate::embedding;
 use crate::state::AppState;
-use tauri::State;
+use crate::tags_file;
+use rusqlite::Connection;
+use tauri::{AppHandle, Manager};
 
 #[tauri::command]
-pub fn get_description(state: State<AppState>, media_id: String) -> Result<Option<String>, String> {
-    let db = state.db.lock().unwrap();
-    let conn = db.as_ref().ok_or("No database connection")?;
-    queries::get_description(conn, &media_id).map_err(|e| format!("Query failed: {e}"))
+pub async fn get_description(app_handle: AppHandle, media_id: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<AppState>();
+        let vault_path = state.vault_path.lock().unwrap().clone().ok_or("No vault open")?;
+        let conn = Connection::open(vault_path.join("vault.db"))
+            .map_err(|e| format!("DB error: {e}"))?;
+        queries::get_description(&conn, &media_id).map_err(|e| format!("Query failed: {e}"))
+    })
+    .await
+    .map_err(|e| format!("{e}"))?
 }
 
 #[tauri::command]
-pub fn set_description(
-    state: State<AppState>,
+pub async fn set_description(
+    app_handle: AppHandle,
     media_id: String,
     description: String,
 ) -> Result<(), String> {
-    let vault_path = state
-        .vault_path
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or("No vault open")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<AppState>();
+        let vault_path = state.vault_path.lock().unwrap().clone().ok_or("No vault open")?;
 
-    // Compute embedding first (lock embedder, then release)
-    let vector = {
-        let mut embedder_guard = state.embedder.lock().unwrap();
-        let embedder = embedder_guard.as_mut().ok_or("Embedding model not loaded yet")?;
-        embedding::embed_document(embedder, &description)?
-    };
-    let bytes = embedding::vector_to_bytes(&vector);
+        let conn = Connection::open(vault_path.join("vault.db"))
+            .map_err(|e| format!("DB error: {e}"))?;
 
-    // Update DB
-    let db = state.db.lock().unwrap();
-    let conn = db.as_ref().ok_or("No database connection")?;
-    queries::set_description(conn, &media_id, &description)
-        .map_err(|e| format!("Update failed: {e}"))?;
-    queries::insert_embedding(conn, &media_id, &bytes)
-        .map_err(|e| format!("Failed to store embedding: {e}"))?;
+        // Update the description tag in DB
+        queries::set_description(&conn, &media_id, &description)
+            .map_err(|e| format!("Update failed: {e}"))?;
 
-    // Persist to JSON file
-    descriptions_file::set(&vault_path, &media_id, &description)?;
+        // Persist to tags.json (backup) — build map from DB tags
+        let db_tags = queries::get_tags(&conn, &media_id).unwrap_or_default();
+        let mut tag_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+        for t in &db_tags {
+            tag_map.entry(t.key.clone()).or_default().push(t.value.clone());
+        }
+        tags_file::set_media_tags(&vault_path, &media_id, &tag_map)?;
 
-    Ok(())
+        // Recompute text embedding from assembled tag text
+        if let Ok(Some(tag_text)) = queries::assemble_tag_text(&conn, &media_id) {
+            let vector = {
+                let mut embedder_guard = state.embedder.lock().unwrap();
+                if let Some(embedder) = embedder_guard.as_mut() {
+                    embedding::embed_document(embedder, &tag_text).ok()
+                } else {
+                    None
+                }
+            };
+
+            if let Some(vec) = vector {
+                let bytes = embedding::vector_to_bytes(&vec);
+                let _ = queries::insert_embedding(
+                    &conn, &media_id, "text", &bytes, embedding::MODEL_NAME,
+                );
+            }
+        }
+
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("{e}"))?
 }
 
 #[tauri::command]
-pub fn get_media_for_description(
-    state: State<AppState>,
+pub async fn get_media_for_description(
+    app_handle: AppHandle,
     index: u32,
-    filter_missing: bool,
+    filter_missing_desc: bool,
+    filter_missing_tags: bool,
 ) -> Result<Option<DescriptionPageData>, String> {
-    let db = state.db.lock().unwrap();
-    let conn = db.as_ref().ok_or("No database connection")?;
-    queries::get_media_for_description(conn, index, filter_missing)
-        .map_err(|e| format!("Query failed: {e}"))
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<AppState>();
+        let vault_path = state.vault_path.lock().unwrap().clone().ok_or("No vault open")?;
+        let conn = Connection::open(vault_path.join("vault.db"))
+            .map_err(|e| format!("DB error: {e}"))?;
+        queries::get_media_for_description(&conn, index, filter_missing_desc, filter_missing_tags)
+            .map_err(|e| format!("Query failed: {e}"))
+    })
+    .await
+    .map_err(|e| format!("{e}"))?
 }
 
 #[tauri::command]
-pub fn get_media_index(
-    state: State<AppState>,
+pub async fn get_media_index(
+    app_handle: AppHandle,
     media_id: String,
-    filter_missing: bool,
+    filter_missing_desc: bool,
+    filter_missing_tags: bool,
 ) -> Result<Option<u32>, String> {
-    let db = state.db.lock().unwrap();
-    let conn = db.as_ref().ok_or("No database connection")?;
-    queries::get_media_index(conn, &media_id, filter_missing)
-        .map_err(|e| format!("Query failed: {e}"))
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<AppState>();
+        let vault_path = state.vault_path.lock().unwrap().clone().ok_or("No vault open")?;
+        let conn = Connection::open(vault_path.join("vault.db"))
+            .map_err(|e| format!("DB error: {e}"))?;
+        queries::get_media_index(&conn, &media_id, filter_missing_desc, filter_missing_tags)
+            .map_err(|e| format!("Query failed: {e}"))
+    })
+    .await
+    .map_err(|e| format!("{e}"))?
+}
+
+#[tauri::command]
+pub async fn get_filtered_media_ids(
+    app_handle: AppHandle,
+    filter_missing_desc: bool,
+    filter_missing_tags: bool,
+) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<AppState>();
+        let vault_path = state.vault_path.lock().unwrap().clone().ok_or("No vault open")?;
+        let conn = Connection::open(vault_path.join("vault.db"))
+            .map_err(|e| format!("DB error: {e}"))?;
+        queries::get_filtered_media_ids(&conn, filter_missing_desc, filter_missing_tags)
+            .map_err(|e| format!("Query failed: {e}"))
+    })
+    .await
+    .map_err(|e| format!("{e}"))?
+}
+
+#[tauri::command]
+pub async fn get_media_by_id(
+    app_handle: AppHandle,
+    media_id: String,
+) -> Result<Option<crate::db::models::MediaInfo>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<AppState>();
+        let vault_path = state.vault_path.lock().unwrap().clone().ok_or("No vault open")?;
+        let conn = Connection::open(vault_path.join("vault.db"))
+            .map_err(|e| format!("DB error: {e}"))?;
+        queries::get_media_by_id(&conn, &media_id).map_err(|e| format!("Query failed: {e}"))
+    })
+    .await
+    .map_err(|e| format!("{e}"))?
+}
+
+#[tauri::command]
+pub async fn get_missing_counts(app_handle: AppHandle) -> Result<(u32, u32, u32), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<AppState>();
+        let vault_path = state.vault_path.lock().unwrap().clone().ok_or("No vault open")?;
+        let conn = Connection::open(vault_path.join("vault.db"))
+            .map_err(|e| format!("DB error: {e}"))?;
+        queries::get_missing_counts(&conn).map_err(|e| format!("Query failed: {e}"))
+    })
+    .await
+    .map_err(|e| format!("{e}"))?
 }

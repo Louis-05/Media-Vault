@@ -1,12 +1,13 @@
 mod commands;
 mod db;
-mod descriptions_file;
+mod tags_file;
 mod embedding;
 mod logging;
 mod media;
 mod state;
 mod thumbnail;
 pub mod watcher;
+pub mod worker;
 
 use state::AppState;
 use std::sync::Mutex;
@@ -22,6 +23,14 @@ pub fn set_loading_status(app_handle: &AppHandle, status: &str) {
 #[tauri::command]
 fn get_loading_status(state: tauri::State<AppState>) -> String {
     state.loading_status.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn get_build_info() -> (String, String) {
+    (
+        env!("CARGO_PKG_VERSION").to_string(),
+        env!("BUILD_DATETIME").to_string(),
+    )
 }
 
 pub fn run() {
@@ -130,14 +139,17 @@ pub fn run() {
             db: Mutex::new(None),
             vault_path: Mutex::new(None),
             embedder: Mutex::new(None),
-            loading_status: Mutex::new("Loading EmbeddingGemma 300M model...".to_string()),
+            loading_status: Mutex::new("Loading embedding model...".to_string()),
+            worker_tx: Mutex::new(None),
+            search_request_tx: Mutex::new(None),
+            search_done_tx: Mutex::new(None),
         })
         .setup(|app| {
             let handle = app.handle().clone();
 
             // Load embedding model in a background thread
             std::thread::spawn(move || {
-                set_loading_status(&handle, "Loading EmbeddingGemma 300M model...");
+                set_loading_status(&handle, "Loading embedding model...");
 
                 match embedding::create_embedder() {
                     Ok(embedder) => {
@@ -157,10 +169,17 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_loading_status,
+            get_build_info,
             commands::vault::create_vault,
             commands::vault::open_vault,
             commands::vault::close_vault,
             commands::vault::get_last_vault,
+            commands::vault::deep_refresh,
+            commands::vault::pause_processing,
+            commands::vault::resume_processing,
+            commands::vault::get_processed_count,
+            commands::vault::get_zoom_level,
+            commands::vault::set_zoom_level,
             commands::media::import_media,
             commands::media::get_media_list,
             commands::media::get_media_thumbnail,
@@ -176,10 +195,17 @@ pub fn run() {
             commands::descriptions::set_description,
             commands::descriptions::get_media_for_description,
             commands::descriptions::get_media_index,
+            commands::descriptions::get_filtered_media_ids,
+            commands::descriptions::get_media_by_id,
+            commands::descriptions::get_missing_counts,
             commands::search::search_media,
-            commands::vault::refresh_vault,
-            commands::vault::get_zoom_level,
-            commands::vault::set_zoom_level,
+            commands::tags::get_media_tags,
+            commands::tags::set_media_tags,
+            commands::tags::get_all_tag_keys,
+            commands::tags::get_tag_values,
+            commands::tags::create_tag_key,
+            commands::tags::rename_tag_key,
+            commands::tags::delete_tag_key,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

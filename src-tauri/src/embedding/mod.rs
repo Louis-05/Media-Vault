@@ -1,5 +1,7 @@
-use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+use fastembed::{EmbeddingModel, TextEmbedding, TextInitOptions};
 use std::path::PathBuf;
+
+pub const MODEL_NAME: &str = "EmbeddingGemma300M";
 
 /// Return a `model` directory next to the running executable.
 fn model_dir() -> PathBuf {
@@ -12,21 +14,19 @@ fn model_dir() -> PathBuf {
 }
 
 pub fn create_embedder() -> Result<TextEmbedding, String> {
-    TextEmbedding::try_new(
-        InitOptions::new(EmbeddingModel::EmbeddingGemma300M)
-            .with_cache_dir(model_dir())
-            .with_show_download_progress(true),
-    )
-    .map_err(|e| format!("Failed to initialize embedding model: {e}"))
+    let options = TextInitOptions::new(EmbeddingModel::EmbeddingGemma300M)
+        .with_cache_dir(model_dir());
+    TextEmbedding::try_new(options)
+        .map_err(|e| format!("Failed to initialize Gemma embedding model: {e}"))
 }
 
-/// Embed a media description (document side).
-/// Uses the EmbeddingGemma prompt format: "title: none | text: {description}"
+/// Embed a document/description for storage.
+/// Uses the EmbeddingGemma document prompt format.
 pub fn embed_document(embedder: &mut TextEmbedding, text: &str) -> Result<Vec<f32>, String> {
-    let formatted = format!("title: none | text: {text}");
+    let prompted = format!("title: none | text: {text}");
     let results = embedder
-        .embed(vec![&formatted], None)
-        .map_err(|e| format!("Failed to embed text: {e}"))?;
+        .embed(&[&prompted], None)
+        .map_err(|e| format!("Failed to embed document: {e}"))?;
 
     results
         .into_iter()
@@ -35,12 +35,12 @@ pub fn embed_document(embedder: &mut TextEmbedding, text: &str) -> Result<Vec<f3
 }
 
 /// Embed a search query.
-/// Uses the EmbeddingGemma prompt format: "task: search result | query: {query}"
+/// Uses the EmbeddingGemma query prompt format.
 pub fn embed_query(embedder: &mut TextEmbedding, text: &str) -> Result<Vec<f32>, String> {
-    let formatted = format!("task: search result | query: {text}");
+    let prompted = format!("task: search result | query: {text}");
     let results = embedder
-        .embed(vec![&formatted], None)
-        .map_err(|e| format!("Failed to embed text: {e}"))?;
+        .embed(&[&prompted], None)
+        .map_err(|e| format!("Failed to embed query: {e}"))?;
 
     results
         .into_iter()

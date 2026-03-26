@@ -29,11 +29,35 @@
 
   let hasAnimatedPreview = $derived(media.media_type === "video" || media.media_type === "gif");
   let isAudio = $derived(media.media_type === "audio");
+  let cardEl: HTMLDivElement | undefined;
+
+  // When the grid reshuffles (search, new items), the card can move out from under
+  // the cursor without triggering mouseleave. Detect this and stop playback.
+  $effect(() => {
+    if (!hovering) return;
+    const interval = setInterval(() => {
+      if (!cardEl) return;
+      const rect = cardEl.getBoundingClientRect();
+      // Check if a pointer is still inside (no API for this, so check via :hover)
+      if (!cardEl.matches(":hover")) {
+        hovering = false;
+        stopAudio();
+      }
+    }, 200);
+    return () => clearInterval(interval);
+  });
 
   function scoreColor(s: number): string {
-    // Green (120) at 100%, Red (0) at 0%
     const hue = Math.round(s * 120);
     return `hsl(${hue}, 70%, 45%)`;
+  }
+
+  function formatDuration(seconds: number): string {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    return `${m}:${String(s).padStart(2, "0")}`;
   }
 
   onMount(async () => {
@@ -194,6 +218,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="card"
+  bind:this={cardEl}
   onmousedown={handleDragStart}
   oncontextmenu={handleContextMenu}
   onmouseenter={() => { hovering = true; previewKey++; if (isAudio) playAudio(); }}
@@ -231,6 +256,9 @@
     {/if}
     {#if score !== undefined}
       <span class="score" style="background-color: {scoreColor(score)}">{Math.round(score * 100)}%</span>
+    {/if}
+    {#if media.duration}
+      <span class="duration">{formatDuration(media.duration)}</span>
     {/if}
     <span class="badge">{media.codec ? `${media.extension}/${media.codec}` : media.extension}</span>
   </div>
@@ -320,6 +348,18 @@
     left: 6px;
     color: white;
     font-size: 0.7rem;
+    font-weight: bold;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+
+  .duration {
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
+    background-color: rgba(0, 0, 0, 0.7);
+    color: white;
+    font-size: 0.65rem;
     font-weight: bold;
     padding: 2px 6px;
     border-radius: 4px;

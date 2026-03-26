@@ -5,6 +5,8 @@
   import { onMount } from "svelte";
   import SearchPage from "./lib/components/SearchPage.svelte";
   import DescriptionsPage from "./lib/components/DescriptionsPage.svelte";
+  import SettingsPage from "./lib/components/SettingsPage.svelte";
+  import TagsPage from "./lib/components/TagsPage.svelte";
   import FolderPicker from "./lib/components/FolderPicker.svelte";
   import LoadingScreen from "./lib/components/LoadingScreen.svelte";
 
@@ -54,6 +56,10 @@
   <FolderPicker />
 {:else if $currentPage === "search"}
   <SearchPage />
+{:else if $currentPage === "settings"}
+  <SettingsPage />
+{:else if $currentPage === "tags"}
+  <TagsPage />
 {:else}
   <DescriptionsPage />
 {/if}
