@@ -96,6 +96,14 @@ pub fn run() {
                 .map(|s| s.to_string());
 
             if let Some(range) = range_header {
+                if file_size == 0 {
+                    return Response::builder()
+                        .status(416)
+                        .header("Content-Range", format!("bytes */{file_size}"))
+                        .body(Vec::new())
+                        .unwrap();
+                }
+
                 // Parse "bytes=START-END" or "bytes=START-"
                 let range = range.strip_prefix("bytes=").unwrap_or(&range);
                 let parts: Vec<&str> = range.split('-').collect();

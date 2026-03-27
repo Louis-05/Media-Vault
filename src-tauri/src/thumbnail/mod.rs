@@ -3,6 +3,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Pre-generated 192x192 WebP placeholder with red "Failed to generate preview" text.
+const ERROR_THUMBNAIL: &[u8] = include_bytes!("../../assets/error_thumbnail.webp");
+
+/// Write the error placeholder to the given path.
+fn write_error_placeholder(path: &Path) {
+    if let Err(e) = fs::write(path, ERROR_THUMBNAIL) {
+        log::error!("Failed to write error placeholder to {}: {e}", path.display());
+    }
+}
+
 /// Resolve an executable name: look for it next to the running binary first,
 /// fall back to the bare name (system PATH lookup).
 fn resolve_exe(name: &str) -> std::ffi::OsString {
@@ -48,6 +58,11 @@ fn ffprobe() -> Command {
     }
     #[cfg(not(windows))]
     cmd
+}
+
+/// Check that a file exists and is non-empty.
+fn is_non_empty(path: &Path) -> bool {
+    fs::metadata(path).map(|m| m.len() > 0).unwrap_or(false)
 }
 
 /// Ensure the previews directory exists and return its path.
@@ -121,16 +136,25 @@ pub fn generate_thumbnail(vault_path: &Path, media_path: &Path, media_id: &str) 
         "-pix_fmt", "yuv420p", "-f", "webp", out,
     ]);
 
-    if result.is_ok() {
+    if result.is_ok() && is_non_empty(&output) {
         return Ok(());
     }
 
     // Retry without -ss for images/gifs
-    run_ffmpeg(&[
+    let result = run_ffmpeg(&[
         "-y", "-i", input, "-vframes", "1",
         "-vf", "scale=192:192:force_original_aspect_ratio=decrease",
         "-pix_fmt", "yuv420p", "-f", "webp", out,
-    ])
+    ]);
+
+    if result.is_ok() && is_non_empty(&output) {
+        return Ok(());
+    }
+
+    // Both attempts failed — write error placeholder
+    log::warn!("Thumbnail generation failed for {media_id}, using error placeholder");
+    write_error_placeholder(&output);
+    Ok(())
 }
 
 /// Generate an animated preview for a video or GIF file (max 20 seconds).
@@ -152,14 +176,25 @@ pub fn generate_animated_preview(vault_path: &Path, media_path: &Path, media_id:
         }
         let out = output.to_str().ok_or("Invalid output path")?;
 
-        run_ffmpeg(&[
+        let result = run_ffmpeg(&[
             "-y", "-i", input,
             "-t", &preview_duration,
             "-vf", "fps=24,scale=192:192:force_original_aspect_ratio=decrease:flags=lanczos",
             "-pix_fmt", "yuv420p",
             "-loop", "0",
             out,
-        ])
+        ]);
+
+        if result.is_ok() && is_non_empty(&output) {
+            return Ok(());
+        }
+
+        // Clean up empty/failed file and write placeholder as static webp
+        let _ = fs::remove_file(&output);
+        let fallback = previews.join(format!("{media_id}_preview.webp"));
+        log::warn!("Animated preview generation failed for {media_id}, using error placeholder");
+        write_error_placeholder(&fallback);
+        Ok(())
     } else {
         let output = previews.join(format!("{media_id}_preview.mp4"));
         if output.exists() {
@@ -167,7 +202,7 @@ pub fn generate_animated_preview(vault_path: &Path, media_path: &Path, media_id:
         }
         let out = output.to_str().ok_or("Invalid output path")?;
 
-        run_ffmpeg(&[
+        let result = run_ffmpeg(&[
             "-y", "-i", input,
             "-t", &preview_duration,
             "-vf", "scale=192:192:force_original_aspect_ratio=decrease:flags=lanczos,pad=ceil(iw/2)*2:ceil(ih/2)*2",
@@ -180,7 +215,18 @@ pub fn generate_animated_preview(vault_path: &Path, media_path: &Path, media_id:
             "-ac", "1",
             "-movflags", "+faststart",
             out,
-        ])
+        ]);
+
+        if result.is_ok() && is_non_empty(&output) {
+            return Ok(());
+        }
+
+        // Clean up empty/failed file and write placeholder as static webp
+        let _ = fs::remove_file(&output);
+        let fallback = previews.join(format!("{media_id}_preview.webp"));
+        log::warn!("Video preview generation failed for {media_id}, using error placeholder");
+        write_error_placeholder(&fallback);
+        Ok(())
     }
 }
 
@@ -190,13 +236,15 @@ pub fn get_thumbnail_path(vault_path: &Path, media_id: &str) -> Option<PathBuf> 
     if path.exists() { Some(path) } else { None }
 }
 
-/// Get the animated preview path (MP4 or GIF). Returns None if neither exists.
+/// Get the animated preview path (MP4, GIF, or WebP fallback). Returns None if none exists.
 pub fn get_preview_path(vault_path: &Path, media_id: &str) -> Option<PathBuf> {
     let previews = vault_path.join("previews");
     let mp4 = previews.join(format!("{media_id}_preview.mp4"));
     if mp4.exists() { return Some(mp4); }
     let gif = previews.join(format!("{media_id}_preview.gif"));
     if gif.exists() { return Some(gif); }
+    let webp = previews.join(format!("{media_id}_preview.webp"));
+    if webp.exists() { return Some(webp); }
     None
 }
 
@@ -207,6 +255,7 @@ pub fn remove_previews(vault_path: &Path, media_id: &str) {
     let _ = fs::remove_file(previews.join(format!("{media_id}_preview.gif")));
     let _ = fs::remove_file(previews.join(format!("{media_id}_preview.mp4")));
     let _ = fs::remove_file(previews.join(format!("{media_id}_preview.mp3")));
+    let _ = fs::remove_file(previews.join(format!("{media_id}_preview.webp")));
 }
 
 fn get_media_duration(input: &str) -> Result<f64, String> {
