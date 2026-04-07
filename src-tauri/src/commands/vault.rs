@@ -1,6 +1,7 @@
 use crate::db::models::VaultInfo;
 use crate::db::{queries, schema};
 use crate::state::{AppState, WorkerMsg};
+use crate::thumbnail;
 use crate::watcher;
 use crate::worker;
 use rusqlite::Connection;
@@ -219,6 +220,86 @@ pub async fn deep_refresh(app_handle: AppHandle) -> Result<(), String> {
         do_deep_refresh(&vault_path, &handle);
         if let Some(tx) = worker_tx {
             let _ = tx.send(WorkerMsg::Wake);
+        }
+    });
+
+    Ok(())
+}
+
+/// Delete all existing thumbnails/previews and regenerate them for every processed
+/// media item. Pauses the worker for the duration so the two don't fight.
+#[tauri::command]
+pub async fn regenerate_all_previews(app_handle: AppHandle) -> Result<(), String> {
+    let state = app_handle.state::<AppState>();
+    let vault_path = state.vault_path.lock().unwrap().clone().ok_or("No vault open")?;
+    let worker_tx = state.worker_tx.lock().unwrap().clone();
+
+    // Pause the worker for the duration
+    if let Some(ref tx) = worker_tx {
+        let _ = tx.send(WorkerMsg::Pause);
+    }
+
+    let handle = app_handle.clone();
+    std::thread::spawn(move || {
+        let conn = match Connection::open(vault_path.join("vault.db")) {
+            Ok(c) => c,
+            Err(e) => {
+                log::error!("regenerate_all_previews: failed to open db: {e}");
+                if let Some(tx) = worker_tx {
+                    let _ = tx.send(WorkerMsg::Resume);
+                }
+                return;
+            }
+        };
+
+        let media = match queries::get_all_processed_media(&conn) {
+            Ok(m) => m,
+            Err(e) => {
+                log::error!("regenerate_all_previews: query failed: {e}");
+                if let Some(tx) = worker_tx {
+                    let _ = tx.send(WorkerMsg::Resume);
+                }
+                return;
+            }
+        };
+
+        let total = media.len();
+        log::info!("Regenerating thumbnails/previews for {total} media items");
+        let media_dir = vault_path.join("media");
+
+        for (i, (id, ext, media_type)) in media.iter().enumerate() {
+            crate::set_loading_status(
+                &handle,
+                &format!("Regenerating previews {}/{total}", i + 1),
+            );
+
+            // Delete existing previews so generators don't no-op
+            thumbnail::remove_previews(&vault_path, id);
+
+            let media_file = media_dir.join(format!("{id}.{ext}"));
+            if !media_file.exists() {
+                log::warn!("Media file missing during regen: {id}.{ext}");
+                continue;
+            }
+
+            if media_type != "audio" {
+                if let Err(e) = thumbnail::generate_thumbnail(&vault_path, &media_file, id) {
+                    log::error!("Failed to regenerate thumbnail for {id}: {e}");
+                }
+            }
+            if media_type == "video" || media_type == "gif" {
+                if let Err(e) = thumbnail::generate_animated_preview(&vault_path, &media_file, id) {
+                    log::error!("Failed to regenerate animated preview for {id}: {e}");
+                }
+            }
+        }
+
+        crate::set_loading_status(&handle, "");
+        let _ = handle.emit("media-changed", total as u32);
+        log::info!("Finished regenerating previews for {total} media items");
+
+        if let Some(tx) = worker_tx {
+            let _ = tx.send(WorkerMsg::Resume);
         }
     });
 

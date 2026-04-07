@@ -4,7 +4,6 @@ use std::path::Path;
 
 /// Tags JSON file maps media_id -> { tag_key -> [values] }.
 /// Stored at `{vault_root}/tags.json`.
-
 pub type MediaTags = HashMap<String, Vec<String>>;
 pub type AllTags = HashMap<String, MediaTags>;
 
@@ -81,6 +80,47 @@ pub fn remove_tag_key(vault_path: &Path, key: &str) -> Result<(), String> {
     for media_tags in all.values_mut() {
         if media_tags.remove(key).is_some() {
             changed = true;
+        }
+    }
+    if changed {
+        save(vault_path, &all)?;
+    }
+    Ok(())
+}
+
+/// Rename a value within a tag key across all media in the JSON file.
+/// If the new value already exists for the same key on a media, the duplicate
+/// is collapsed.
+pub fn rename_tag_value(
+    vault_path: &Path,
+    key: &str,
+    old_value: &str,
+    new_value: &str,
+) -> Result<(), String> {
+    let mut all = load(vault_path);
+    let mut changed = false;
+    for media_tags in all.values_mut() {
+        if let Some(values) = media_tags.get_mut(key) {
+            let mut updated = Vec::with_capacity(values.len());
+            let mut had_old = false;
+            for v in values.drain(..) {
+                if v == old_value {
+                    had_old = true;
+                    if !updated.iter().any(|u: &String| u == new_value) {
+                        updated.push(new_value.to_string());
+                    }
+                } else if v == new_value {
+                    if !updated.iter().any(|u: &String| u == new_value) {
+                        updated.push(v);
+                    }
+                } else {
+                    updated.push(v);
+                }
+            }
+            *values = updated;
+            if had_old {
+                changed = true;
+            }
         }
     }
     if changed {

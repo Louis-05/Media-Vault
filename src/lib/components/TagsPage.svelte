@@ -1,6 +1,6 @@
 <script lang="ts">
   import { currentPage } from "../stores/vault";
-  import { getAllTagKeys, getTagValues, createTagKey, renameTagKey, deleteTagKey } from "../api";
+  import { getAllTagKeys, getTagValues, createTagKey, renameTagKey, renameTagValue, deleteTagKey } from "../api";
   import type { TagKeyInfo } from "../api";
   import { onMount } from "svelte";
 
@@ -11,6 +11,12 @@
   let renamingKey = $state<string | null>(null);
   let renameValue = $state("");
   let confirmDeleteKey = $state<string | null>(null);
+
+  // Right-click context menu for tag values
+  let valueMenu = $state<{ x: number; y: number; value: string } | null>(null);
+  // Inline rename state for a tag value
+  let renamingValue = $state<string | null>(null);
+  let renameValueInput = $state("");
 
   onMount(() => {
     loadKeys();
@@ -84,10 +90,51 @@
     }
   }
 
+  function openValueMenu(e: MouseEvent, value: string) {
+    e.preventDefault();
+    valueMenu = { x: e.clientX, y: e.clientY, value };
+  }
+
+  function closeValueMenu() {
+    valueMenu = null;
+  }
+
+  function startRenameValue(value: string) {
+    renamingValue = value;
+    renameValueInput = value;
+    valueMenu = null;
+  }
+
+  async function finishRenameValue() {
+    if (!expandedKey || renamingValue === null) {
+      renamingValue = null;
+      return;
+    }
+    const newVal = renameValueInput.trim();
+    if (!newVal || newVal === renamingValue) {
+      renamingValue = null;
+      return;
+    }
+    const key = expandedKey;
+    const oldVal = renamingValue;
+    try {
+      await renameTagValue(key, oldVal, newVal);
+      renamingValue = null;
+      // Reload values for the currently expanded key
+      expandedValues = await getTagValues(key);
+    } catch (e) {
+      console.error("Failed to rename tag value:", e);
+      renamingValue = null;
+    }
+  }
+
   function goBack() {
     currentPage.set("search");
   }
 </script>
+
+<svelte:window onclick={closeValueMenu} />
+
 
 <div class="tags-page">
   <header>
@@ -142,7 +189,22 @@
                 <span class="no-values">No values yet</span>
               {:else}
                 {#each expandedValues as value}
-                  <span class="value-chip">{value}</span>
+                  {#if renamingValue === value}
+                    <input
+                      class="value-rename-input"
+                      type="text"
+                      bind:value={renameValueInput}
+                      onkeydown={(e) => { if (e.key === "Enter") finishRenameValue(); if (e.key === "Escape") renamingValue = null; }}
+                      onblur={finishRenameValue}
+                    />
+                  {:else}
+                    <span
+                      class="value-chip"
+                      role="button"
+                      tabindex="0"
+                      oncontextmenu={(e) => openValueMenu(e, value)}
+                    >{value}</span>
+                  {/if}
                 {/each}
               {/if}
             </div>
@@ -155,6 +217,19 @@
       {/if}
     </div>
   </main>
+
+  {#if valueMenu}
+    <div
+      class="context-menu"
+      style="left: {valueMenu.x}px; top: {valueMenu.y}px;"
+      onclick={(e) => e.stopPropagation()}
+      oncontextmenu={(e) => e.preventDefault()}
+      role="menu"
+      tabindex="-1"
+    >
+      <button class="context-menu-item" onclick={() => startRenameValue(valueMenu!.value)}>Rename</button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -311,6 +386,51 @@
     border: 1px solid var(--border);
     border-radius: 4px;
     color: var(--text);
+    cursor: context-menu;
+    user-select: none;
+  }
+
+  .value-chip:hover {
+    border-color: var(--accent);
+  }
+
+  .value-rename-input {
+    padding: 2px 8px;
+    font-size: 0.8rem;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--text);
+    min-width: 80px;
+  }
+
+  .context-menu {
+    position: fixed;
+    z-index: 1000;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    min-width: 120px;
+  }
+
+  .context-menu-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: 0.85rem;
+    padding: 6px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  .context-menu-item:hover {
+    background: var(--bg);
+    color: var(--accent);
   }
 
   .no-values {

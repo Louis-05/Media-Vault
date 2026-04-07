@@ -1,9 +1,10 @@
 <script lang="ts">
   import { currentPage, autoSearch } from "../stores/vault";
-  import { deepRefresh, getBuildInfo } from "../api";
+  import { deepRefresh, getBuildInfo, regenerateAllPreviews } from "../api";
   import { onMount } from "svelte";
 
   let refreshing = $state(false);
+  let regenerating = $state(false);
   let version = $state("");
   let buildDate = $state("");
 
@@ -25,6 +26,19 @@
       console.error("Deep refresh failed:", e);
     }
     refreshing = false;
+  }
+
+  async function handleRegeneratePreviews() {
+    if (!confirm("Delete and regenerate all thumbnails and previews? This may take a while.")) {
+      return;
+    }
+    regenerating = true;
+    try {
+      await regenerateAllPreviews();
+    } catch (e) {
+      console.error("Regenerate previews failed:", e);
+    }
+    regenerating = false;
   }
 
   function goBack() {
@@ -62,6 +76,15 @@
         </div>
         <button onclick={handleDeepRefresh} disabled={refreshing}>
           {refreshing ? "Refreshing..." : "Deep Refresh"}
+        </button>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <strong>Regenerate Previews</strong>
+          <p>Delete and rebuild all thumbnails and animated previews from scratch. Useful after changing preview encoding settings.</p>
+        </div>
+        <button onclick={handleRegeneratePreviews} disabled={regenerating}>
+          {regenerating ? "Regenerating..." : "Regenerate"}
         </button>
       </div>
     </section>

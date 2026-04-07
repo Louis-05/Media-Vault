@@ -25,7 +25,7 @@ pub fn create_embedder() -> Result<TextEmbedding, String> {
 pub fn embed_document(embedder: &mut TextEmbedding, text: &str) -> Result<Vec<f32>, String> {
     let prompted = format!("title: none | text: {text}");
     let results = embedder
-        .embed(&[&prompted], None)
+        .embed([&prompted], None)
         .map_err(|e| format!("Failed to embed document: {e}"))?;
 
     results
@@ -39,7 +39,7 @@ pub fn embed_document(embedder: &mut TextEmbedding, text: &str) -> Result<Vec<f3
 pub fn embed_query(embedder: &mut TextEmbedding, text: &str) -> Result<Vec<f32>, String> {
     let prompted = format!("task: search result | query: {text}");
     let results = embedder
-        .embed(&[&prompted], None)
+        .embed([&prompted], None)
         .map_err(|e| format!("Failed to embed query: {e}"))?;
 
     results

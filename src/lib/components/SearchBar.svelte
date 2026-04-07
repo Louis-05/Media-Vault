@@ -2,9 +2,10 @@
   interface Props {
     onSearch: (query: string) => void;
     auto?: boolean;
+    initialQuery?: string;
   }
-  let { onSearch, auto = true }: Props = $props();
-  let query = $state("");
+  let { onSearch, auto = true, initialQuery = "" }: Props = $props();
+  let query = $state(initialQuery);
   let debounceTimeout: ReturnType<typeof setTimeout> | undefined;
 
   function handleInput() {

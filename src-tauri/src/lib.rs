@@ -183,6 +183,7 @@ pub fn run() {
             commands::vault::close_vault,
             commands::vault::get_last_vault,
             commands::vault::deep_refresh,
+            commands::vault::regenerate_all_previews,
             commands::vault::pause_processing,
             commands::vault::resume_processing,
             commands::vault::get_processed_count,
@@ -211,6 +212,7 @@ pub fn run() {
             commands::tags::get_tag_values,
             commands::tags::create_tag_key,
             commands::tags::rename_tag_key,
+            commands::tags::rename_tag_value,
             commands::tags::delete_tag_key,
         ])
         .run(tauri::generate_context!())

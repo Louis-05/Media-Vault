@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nickel-org/nickel.rs/master/src/tauri/tauri-config-schema.json",
   "productName": "Media Vault",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "identifier": "com.media-vault.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",

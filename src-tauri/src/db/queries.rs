@@ -11,6 +11,7 @@ pub fn get_vault_info(conn: &Connection, path: &str) -> rusqlite::Result<VaultIn
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn insert_media(
     conn: &Connection,
     id: &str,
@@ -351,6 +352,49 @@ pub fn rename_tag_key(conn: &Connection, old_key: &str, new_key: &str) -> rusqli
     Ok(())
 }
 
+/// Rename a value within a tag key. Returns the list of media_ids whose tags
+/// were affected (so callers can refresh embeddings).
+pub fn rename_tag_value(
+    conn: &Connection,
+    key: &str,
+    old_value: &str,
+    new_value: &str,
+) -> rusqlite::Result<Vec<String>> {
+    // Collect affected media ids first
+    let mut stmt = conn.prepare(
+        "SELECT media_id FROM tags WHERE key = ?1 AND value = ?2",
+    )?;
+    let affected: Vec<String> = stmt
+        .query_map(params![key, old_value], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(stmt);
+
+    // For each affected media: if the new value already exists for the same key,
+    // delete the old row (avoids PK conflict); otherwise update it.
+    for media_id in &affected {
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM tags WHERE media_id = ?1 AND key = ?2 AND value = ?3",
+                params![media_id, key, new_value],
+                |_| Ok(true),
+            )
+            .optional()?
+            .unwrap_or(false);
+        if exists {
+            conn.execute(
+                "DELETE FROM tags WHERE media_id = ?1 AND key = ?2 AND value = ?3",
+                params![media_id, key, old_value],
+            )?;
+        } else {
+            conn.execute(
+                "UPDATE tags SET value = ?1 WHERE media_id = ?2 AND key = ?3 AND value = ?4",
+                params![new_value, media_id, key, old_value],
+            )?;
+        }
+    }
+    Ok(affected)
+}
+
 pub fn delete_tag_key(conn: &Connection, key: &str) -> rusqlite::Result<()> {
     conn.execute("DELETE FROM tags WHERE key = ?1", params![key])?;
     conn.execute("DELETE FROM tag_keys WHERE key = ?1", params![key])?;
@@ -415,6 +459,23 @@ pub fn get_missing_counts(conn: &Connection) -> rusqlite::Result<(u32, u32, u32)
 pub fn get_unprocessed_media(conn: &Connection) -> rusqlite::Result<Vec<(String, String, String)>> {
     let mut stmt = conn.prepare(
         "SELECT id, extension, media_type FROM media WHERE processed = 0 ORDER BY imported_at ASC",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    rows.collect()
+}
+
+/// Returns (id, extension, media_type) for every processed media item.
+pub fn get_all_processed_media(
+    conn: &Connection,
+) -> rusqlite::Result<Vec<(String, String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, extension, media_type FROM media WHERE processed = 1 ORDER BY imported_at ASC",
     )?;
     let rows = stmt.query_map([], |row| {
         Ok((

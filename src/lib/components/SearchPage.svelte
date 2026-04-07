@@ -1,28 +1,44 @@
 <script lang="ts">
-  import { currentPage, currentVault, mediaList, editMediaId, isDraggingOut, loadingStatus, processedCount, autoSearch } from "../stores/vault";
+  import { currentPage, currentVault, mediaList, editMediaId, isDraggingOut, loadingStatus, processedCount, autoSearch, searchQueryStore, searchResultsStore, searchHasMoreStore, mediaHasMoreStore, searchScrollTop } from "../stores/vault";
   import { get } from "svelte/store";
   import { getMediaList, searchMedia, importMedia, openVault, createVault, getProcessedCount, pauseProcessing, resumeProcessing } from "../api";
-  import type { MediaInfo } from "../api";
+  import type { MediaInfo, SearchResult } from "../api";
   import { open } from "@tauri-apps/plugin-dialog";
   import { listen } from "@tauri-apps/api/event";
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import MediaGrid from "./MediaGrid.svelte";
   import SearchBar from "./SearchBar.svelte";
 
-  let searchQuery = $state("");
-  let searchResults = $state<any[]>([]);
+  let searchQuery = $state(get(searchQueryStore));
+  let searchResults = $state<SearchResult[]>(get(searchResultsStore));
   let isSearching = $state(false);
   let notification = $state<string | null>(null);
   let notificationTimeout: ReturnType<typeof setTimeout> | undefined;
-  let hasMore = $state(true);
-  let searchHasMore = $state(true);
+  let hasMore = $state(get(mediaHasMoreStore));
+  let searchHasMore = $state(get(searchHasMoreStore));
   let loadingMore = $state(false);
   let paused = $state(false);
+  let mainEl = $state<HTMLElement | null>(null);
   const PAGE_SIZE = 200;
 
+  // Mirror local state into the persistence stores so navigation away preserves them.
+  $effect(() => { searchQueryStore.set(searchQuery); });
+  $effect(() => { searchResultsStore.set(searchResults); });
+  $effect(() => { searchHasMoreStore.set(searchHasMore); });
+  $effect(() => { mediaHasMoreStore.set(hasMore); });
+
   onMount(() => {
-    loadMedia();
+    // Only fetch the media list if we don't already have one cached in the store
+    // (e.g. on first mount). Returning from another view should keep the existing list.
+    if (get(mediaList).length === 0) {
+      loadMedia();
+    }
     loadProcessedCount();
+
+    // Restore scroll position after the grid has rendered
+    tick().then(() => {
+      if (mainEl) mainEl.scrollTop = get(searchScrollTop);
+    });
 
     // Listen for drag-and-drop file imports
     const unlistenDrop = listen<{ paths: string[] }>("tauri://drag-drop", async (event) => {
@@ -187,11 +203,20 @@
     }
   }
 
+  // Reload media only when the vault actually changes after this component is mounted
+  // (not on every mount — that would clobber cached results when returning from another view).
+  let lastVaultPath = $state<string | null>(get(currentVault)?.path ?? null);
   $effect(() => {
-    // Reload media when vault changes
-    if ($currentVault) {
+    const v = $currentVault;
+    if (v && v.path !== lastVaultPath) {
+      lastVaultPath = v.path;
+      searchQuery = "";
+      searchResults = [];
+      searchHasMore = true;
       loadMedia();
       loadProcessedCount();
+      searchScrollTop.set(0);
+      if (mainEl) mainEl.scrollTop = 0;
     }
   });
 </script>
@@ -207,7 +232,7 @@
       </div>
     </div>
     <div class="header-center">
-      <SearchBar onSearch={handleSearch} auto={$autoSearch} />
+      <SearchBar onSearch={handleSearch} auto={$autoSearch} initialQuery={searchQuery} />
     </div>
     <div class="header-right">
       <span class="media-count">{$processedCount} media</span>
@@ -228,7 +253,7 @@
     <div class="notification">{notification}</div>
   {/if}
 
-  <main>
+  <main bind:this={mainEl} onscroll={() => { if (mainEl) searchScrollTop.set(mainEl.scrollTop); }}>
     {#if searchQuery.trim() && searchResults.length > 0}
       <MediaGrid items={searchResults.map((r) => r.media)} scores={Object.fromEntries(searchResults.map((r) => [r.media.id, r.score]))} onMediaDeleted={() => { handleSearch(searchQuery); loadMedia(); loadProcessedCount(); }} onEditDescription={handleEditDescription} onLoadMore={loadMoreSearch} hasMore={searchHasMore} />
     {:else if searchQuery.trim() && !isSearching}

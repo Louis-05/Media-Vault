@@ -211,7 +211,7 @@ pub fn generate_animated_preview(vault_path: &Path, media_path: &Path, media_id:
             "-preset", "fast",
             "-crf", "30",
             "-c:a", "aac",
-            "-b:a", "24k",
+            "-b:a", "64k",
             "-ac", "1",
             "-movflags", "+faststart",
             out,

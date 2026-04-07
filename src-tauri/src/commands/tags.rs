@@ -135,6 +135,47 @@ pub async fn rename_tag_key(
 }
 
 #[tauri::command]
+pub async fn rename_tag_value(
+    app_handle: AppHandle,
+    key: String,
+    old_value: String,
+    new_value: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<AppState>();
+        let (vault_path, conn) = open_db(&state)?;
+
+        let affected = queries::rename_tag_value(&conn, &key, &old_value, &new_value)
+            .map_err(|e| format!("Failed to rename tag value: {e}"))?;
+        tags_file::rename_tag_value(&vault_path, &key, &old_value, &new_value)?;
+
+        // Recompute text embeddings for affected media
+        for media_id in &affected {
+            if let Ok(Some(tag_text)) = queries::assemble_tag_text(&conn, media_id) {
+                let vector = {
+                    let mut embedder_guard = state.embedder.lock().unwrap();
+                    if let Some(embedder) = embedder_guard.as_mut() {
+                        embedding::embed_document(embedder, &tag_text).ok()
+                    } else {
+                        None
+                    }
+                };
+                if let Some(vec) = vector {
+                    let bytes = embedding::vector_to_bytes(&vec);
+                    let _ = queries::insert_embedding(
+                        &conn, media_id, "text", &bytes, embedding::MODEL_NAME,
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("{e}"))?
+}
+
+#[tauri::command]
 pub async fn delete_tag_key(app_handle: AppHandle, key: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle.state::<AppState>();

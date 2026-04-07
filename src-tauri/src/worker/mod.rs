@@ -31,6 +31,7 @@ fn check_commands(rx: &mpsc::Receiver<WorkerMsg>) -> (bool, bool) {
 
 /// Process a single media item through the full pipeline:
 /// thumbnail → animated preview → sync description → text embedding → mark processed → emit
+#[allow(clippy::too_many_arguments)]
 fn process_media(
     conn: &Connection,
     vault_path: &Path,

@@ -63,6 +63,10 @@ export async function deepRefresh(): Promise<void> {
   return invoke("deep_refresh");
 }
 
+export async function regenerateAllPreviews(): Promise<void> {
+  return invoke("regenerate_all_previews");
+}
+
 export async function pauseProcessing(): Promise<void> {
   return invoke("pause_processing");
 }
@@ -201,6 +205,14 @@ export async function createTagKey(key: string): Promise<void> {
 
 export async function renameTagKey(oldKey: string, newKey: string): Promise<void> {
   return invoke("rename_tag_key", { oldKey, newKey });
+}
+
+export async function renameTagValue(
+  key: string,
+  oldValue: string,
+  newValue: string,
+): Promise<void> {
+  return invoke("rename_tag_value", { key, oldValue, newValue });
 }
 
 export async function deleteTagKey(key: string): Promise<void> {
