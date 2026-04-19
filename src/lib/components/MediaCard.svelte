@@ -128,6 +128,8 @@
   async function handleDragStart(e: MouseEvent) {
     if (e.button !== 0) return;
     e.preventDefault();
+    hovering = false;
+    stopAudio();
     try {
       const path = await getMediaPath(media.id);
       const icon = await getThumbnailPath(media.id);
