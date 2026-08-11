@@ -52,7 +52,10 @@ fn process_media(
     }
 
     // Step 1: Generate thumbnail
-    if media_type != "audio" && thumbnail::get_thumbnail_path(vault_path, id).is_none() {
+    if media_type != "audio"
+        && thumbnail::get_thumbnail_path(vault_path, id).is_none()
+        && !thumbnail::has_failed_thumbnail(vault_path, id)
+    {
         if let Err(e) = thumbnail::generate_thumbnail(vault_path, &media_file, id) {
             log::error!("Failed to generate thumbnail for {id}: {e}");
         }
@@ -61,6 +64,7 @@ fn process_media(
     // Step 2: Generate animated preview (video/gif)
     if (media_type == "video" || media_type == "gif")
         && thumbnail::get_preview_path(vault_path, id).is_none()
+        && !thumbnail::has_failed_preview(vault_path, id)
     {
         if let Err(e) = thumbnail::generate_animated_preview(vault_path, &media_file, id) {
             log::error!("Failed to generate animated preview for {id}: {e}");

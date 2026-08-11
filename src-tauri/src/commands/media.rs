@@ -126,7 +126,7 @@ pub async fn get_media_thumbnail(app_handle: AppHandle, media_id: String) -> Res
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle.state::<AppState>();
         let vault_path = get_vault_path(&state)?;
-        let path = thumbnail::get_thumbnail_path(&vault_path, &media_id)
+        let path = thumbnail::get_display_thumbnail_path(&vault_path, &media_id)
             .ok_or("No thumbnail found")?;
         let data = std::fs::read(&path).map_err(|e| format!("Failed to read thumbnail: {e}"))?;
         Ok(base64::engine::general_purpose::STANDARD.encode(&data))
@@ -140,7 +140,7 @@ pub async fn get_thumbnail_path(app_handle: AppHandle, media_id: String) -> Resu
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle.state::<AppState>();
         let vault_path = get_vault_path(&state)?;
-        let path = thumbnail::get_thumbnail_path(&vault_path, &media_id)
+        let path = thumbnail::get_display_thumbnail_path(&vault_path, &media_id)
             .ok_or("No thumbnail found")?;
         Ok(path.to_string_lossy().to_string())
     })
@@ -153,7 +153,7 @@ pub async fn get_preview_data(app_handle: AppHandle, media_id: String) -> Result
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle.state::<AppState>();
         let vault_path = get_vault_path(&state)?;
-        if let Some(path) = thumbnail::get_preview_path(&vault_path, &media_id) {
+        if let Some(path) = thumbnail::get_display_preview_path(&vault_path, &media_id) {
             let data = std::fs::read(&path).map_err(|e| format!("Failed to read preview: {e}"))?;
             return Ok(Some(base64::engine::general_purpose::STANDARD.encode(&data)));
         }
@@ -168,7 +168,7 @@ pub async fn get_preview_file_path(app_handle: AppHandle, media_id: String) -> R
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle.state::<AppState>();
         let vault_path = get_vault_path(&state)?;
-        Ok(thumbnail::get_preview_path(&vault_path, &media_id)
+        Ok(thumbnail::get_display_preview_path(&vault_path, &media_id)
             .map(|p| p.to_string_lossy().to_string()))
     })
     .await

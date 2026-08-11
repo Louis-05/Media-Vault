@@ -7,6 +7,7 @@
   import DescriptionsPage from "./lib/components/DescriptionsPage.svelte";
   import SettingsPage from "./lib/components/SettingsPage.svelte";
   import TagsPage from "./lib/components/TagsPage.svelte";
+  import LogsPage from "./lib/components/LogsPage.svelte";
   import FolderPicker from "./lib/components/FolderPicker.svelte";
   import LoadingScreen from "./lib/components/LoadingScreen.svelte";
 
@@ -60,6 +61,8 @@
   <SettingsPage />
 {:else if $currentPage === "tags"}
   <TagsPage />
+{:else if $currentPage === "logs"}
+  <LogsPage />
 {:else}
   <DescriptionsPage />
 {/if}

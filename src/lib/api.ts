@@ -67,6 +67,10 @@ export async function regenerateAllPreviews(): Promise<void> {
   return invoke("regenerate_all_previews");
 }
 
+export async function isFfmpegAvailable(): Promise<boolean> {
+  return invoke("is_ffmpeg_available");
+}
+
 export async function pauseProcessing(): Promise<void> {
   return invoke("pause_processing");
 }
@@ -217,4 +221,30 @@ export async function renameTagValue(
 
 export async function deleteTagKey(key: string): Promise<void> {
   return invoke("delete_tag_key", { key });
+}
+
+// --- Logs ---
+
+export interface LogEntry {
+  seq: number;
+  timestamp: string;
+  level: string;
+  target: string;
+  message: string;
+}
+
+export async function getLogsSince(seq: number): Promise<LogEntry[]> {
+  return invoke("get_logs_since", { seq });
+}
+
+export async function clearLogs(): Promise<void> {
+  return invoke("clear_logs");
+}
+
+export async function copyLogs(text: string): Promise<void> {
+  return invoke("copy_logs", { text });
+}
+
+export async function openLogsFolder(): Promise<void> {
+  return invoke("open_logs_folder");
 }

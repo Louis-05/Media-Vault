@@ -1,12 +1,14 @@
 <script lang="ts">
   import { currentPage, autoSearch } from "../stores/vault";
-  import { deepRefresh, getBuildInfo, regenerateAllPreviews } from "../api";
+  import { deepRefresh, getBuildInfo, isFfmpegAvailable, regenerateAllPreviews } from "../api";
   import { onMount } from "svelte";
 
   let refreshing = $state(false);
   let regenerating = $state(false);
   let version = $state("");
   let buildDate = $state("");
+  let ffmpegOk = $state(true);
+  let regenError = $state("");
 
   onMount(async () => {
     try {
@@ -15,6 +17,11 @@
       buildDate = d;
     } catch (e) {
       console.error("Failed to get build info:", e);
+    }
+    try {
+      ffmpegOk = await isFfmpegAvailable();
+    } catch (e) {
+      console.error("Failed to probe ffmpeg:", e);
     }
   });
 
@@ -33,10 +40,12 @@
       return;
     }
     regenerating = true;
+    regenError = "";
     try {
       await regenerateAllPreviews();
     } catch (e) {
       console.error("Regenerate previews failed:", e);
+      regenError = String(e);
     }
     regenerating = false;
   }
@@ -69,6 +78,13 @@
 
     <section>
       <h3>Vault Maintenance</h3>
+      {#if !ffmpegOk}
+        <p class="warning">
+          ffmpeg was not found. Thumbnails and previews cannot be generated.
+          Place <code>ffmpeg</code> and <code>ffprobe</code> next to the application
+          executable, or install them on your PATH, then restart Media Vault.
+        </p>
+      {/if}
       <div class="setting-row">
         <div class="setting-info">
           <strong>Deep Refresh</strong>
@@ -83,9 +99,23 @@
           <strong>Regenerate Previews</strong>
           <p>Delete and rebuild all thumbnails and animated previews from scratch. Useful after changing preview encoding settings.</p>
         </div>
-        <button onclick={handleRegeneratePreviews} disabled={regenerating}>
+        <button onclick={handleRegeneratePreviews} disabled={regenerating || !ffmpegOk}>
           {regenerating ? "Regenerating..." : "Regenerate"}
         </button>
+      </div>
+      {#if regenError}
+        <p class="warning">{regenError}</p>
+      {/if}
+    </section>
+
+    <section>
+      <h3>Diagnostics</h3>
+      <div class="setting-row">
+        <div class="setting-info">
+          <strong>Session Logs</strong>
+          <p>View everything logged since the app started. Useful for reporting problems.</p>
+        </div>
+        <button onclick={() => currentPage.set("logs")}>View Logs</button>
       </div>
     </section>
 
@@ -201,6 +231,20 @@
 
   .toggle input:checked + .slider::before {
     transform: translateX(20px);
+  }
+
+  .warning {
+    margin: 0 0 12px;
+    padding: 10px 12px;
+    border: 1px solid #b3261e;
+    border-radius: 6px;
+    background-color: rgba(179, 38, 30, 0.12);
+    font-size: 0.85rem;
+    line-height: 1.4;
+  }
+
+  .warning code {
+    font-size: 0.8rem;
   }
 
   .build-info {

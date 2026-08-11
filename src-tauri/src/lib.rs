@@ -2,6 +2,7 @@ mod commands;
 mod db;
 mod tags_file;
 mod embedding;
+mod log_buffer;
 mod logging;
 mod media;
 mod state;
@@ -184,6 +185,7 @@ pub fn run() {
             commands::vault::get_last_vault,
             commands::vault::deep_refresh,
             commands::vault::regenerate_all_previews,
+            commands::vault::is_ffmpeg_available,
             commands::vault::pause_processing,
             commands::vault::resume_processing,
             commands::vault::get_processed_count,
@@ -214,6 +216,10 @@ pub fn run() {
             commands::tags::rename_tag_key,
             commands::tags::rename_tag_value,
             commands::tags::delete_tag_key,
+            commands::logs::get_logs_since,
+            commands::logs::clear_logs,
+            commands::logs::copy_logs,
+            commands::logs::open_logs_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

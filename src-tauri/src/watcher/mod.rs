@@ -114,6 +114,13 @@ pub fn detect_stale_media(vault_path: &Path) -> Result<u32, String> {
         count += 1;
     }
 
+    // Without ffmpeg nothing can be generated — don't queue work that is
+    // guaranteed to fail (and would otherwise churn on every refresh).
+    if !thumbnail::ffmpeg_available() {
+        log::warn!("Skipping missing-preview detection: {}", thumbnail::FFMPEG_MISSING);
+        return Ok(count);
+    }
+
     // Find processed media with missing previews
     let mut stmt = conn
         .prepare("SELECT id, extension, media_type FROM media WHERE processed = 1")
@@ -133,9 +140,13 @@ pub fn detect_stale_media(vault_path: &Path) -> Result<u32, String> {
         if !media_file.exists() {
             continue;
         }
-        let needs_thumb = thumbnail::get_thumbnail_path(vault_path, id).is_none();
+        // A `.failed.webp` marker means ffmpeg already ran on this file and
+        // could not handle it — don't retry it on every refresh.
+        let needs_thumb = thumbnail::get_thumbnail_path(vault_path, id).is_none()
+            && !thumbnail::has_failed_thumbnail(vault_path, id);
         let needs_preview = (media_type == "video" || media_type == "gif")
-            && thumbnail::get_preview_path(vault_path, id).is_none();
+            && thumbnail::get_preview_path(vault_path, id).is_none()
+            && !thumbnail::has_failed_preview(vault_path, id);
         if needs_thumb || needs_preview {
             let _ = queries::mark_media_unprocessed(&conn, id);
             count += 1;

@@ -22,6 +22,10 @@
   import { onMount } from "svelte";
   import { get } from "svelte/store";
 
+  function focusOnMount(node: HTMLElement) {
+    node.focus();
+  }
+
   let data = $state<DescriptionPageData | null>(null);
   let descriptionText = $state("");
   let lastSavedText = $state("");
@@ -548,10 +552,10 @@
                       bind:value={editingTagValue}
                       onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); finishEditTag(); } if (e.key === "Escape") editingTagIndex = null; }}
                       onblur={finishEditTag}
-                      autofocus
+                      use:focusOnMount
                     />
                   {:else}
-                    <span class="tag-value" onclick={() => startEditTag(realIndex)} title="Click to edit">{tag.value}</span>
+                    <button type="button" class="tag-value" onclick={() => startEditTag(realIndex)} title="Click to edit">{tag.value}</button>
                   {/if}
                   <button class="tag-remove" onclick={() => removeTag(realIndex)}>×</button>
                 </div>
@@ -881,6 +885,10 @@
   .tag-value {
     color: var(--text);
     cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
   }
 
   .tag-value:hover {
@@ -929,16 +937,11 @@
   }
 
   .tag-key-input-wrapper input,
-  .tag-value-input-wrapper input,
-  .tag-add > input {
+  .tag-value-input-wrapper input {
     width: 100%;
     padding: 6px 10px;
     font-size: 0.85rem;
     border-radius: 4px;
-  }
-
-  .tag-add > input {
-    flex: 1;
   }
 
   .tag-add button {

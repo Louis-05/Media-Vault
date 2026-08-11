@@ -274,8 +274,14 @@
 </div>
 
 {#if showMenu}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="context-menu" style="left: {menuX}px; top: {menuY}px;" onclick={(e) => e.stopPropagation()}>
+  <div
+    class="context-menu"
+    style="left: {menuX}px; top: {menuY}px;"
+    onclick={(e) => e.stopPropagation()}
+    onkeydown={(e) => e.stopPropagation()}
+    role="menu"
+    tabindex="-1"
+  >
     <button onclick={handleEditDescription}>Edit description</button>
     <button onclick={handleReveal}>Reveal in file explorer</button>
     <button onclick={handleCopyFile}>Copy media</button>

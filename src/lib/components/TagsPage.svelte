@@ -223,6 +223,7 @@
       class="context-menu"
       style="left: {valueMenu.x}px; top: {valueMenu.y}px;"
       onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => e.stopPropagation()}
       oncontextmenu={(e) => e.preventDefault()}
       role="menu"
       tabindex="-1"

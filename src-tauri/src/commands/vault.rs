@@ -101,6 +101,14 @@ fn start_worker(state: &AppState, vault_path: &Path, app_handle: &AppHandle, boo
 /// Deep refresh: cleanup ghosts, detect stale media.
 /// File scanning is handled by the worker thread (one at a time).
 fn do_deep_refresh(vault_path: &Path, app_handle: &AppHandle) {
+    // Drop placeholders written in-band by older builds so the items below are
+    // seen as "missing preview" and get regenerated. Only meaningful when
+    // ffmpeg is actually usable — otherwise we'd delete the only thing the UI
+    // has to show and gain nothing.
+    if thumbnail::ffmpeg_available() {
+        thumbnail::repair_placeholder_previews(vault_path);
+    }
+
     match watcher::cleanup_missing_files(vault_path) {
         Ok(count) => {
             if count > 0 {
@@ -230,6 +238,12 @@ pub async fn deep_refresh(app_handle: AppHandle) -> Result<(), String> {
 /// media item. Pauses the worker for the duration so the two don't fight.
 #[tauri::command]
 pub async fn regenerate_all_previews(app_handle: AppHandle) -> Result<(), String> {
+    // Preflight: this command deletes every existing preview before rebuilding
+    // it, so without a working ffmpeg it would destroy the whole set in seconds.
+    if !thumbnail::ffmpeg_available() {
+        return Err(format!("Cannot regenerate previews. {}", thumbnail::FFMPEG_MISSING));
+    }
+
     let state = app_handle.state::<AppState>();
     let vault_path = state.vault_path.lock().unwrap().clone().ok_or("No vault open")?;
     let worker_tx = state.worker_tx.lock().unwrap().clone();
@@ -304,6 +318,13 @@ pub async fn regenerate_all_previews(app_handle: AppHandle) -> Result<(), String
     });
 
     Ok(())
+}
+
+/// Whether ffmpeg could be located and executed. The frontend uses this to warn
+/// that thumbnails and previews cannot be generated.
+#[tauri::command]
+pub fn is_ffmpeg_available() -> bool {
+    thumbnail::ffmpeg_available()
 }
 
 #[tauri::command]

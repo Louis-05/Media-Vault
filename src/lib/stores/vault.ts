@@ -3,7 +3,9 @@ import type { VaultInfo, MediaInfo, SearchResult } from "../api";
 
 export const currentVault = writable<VaultInfo | null>(null);
 export const mediaList = writable<MediaInfo[]>([]);
-export const currentPage = writable<"search" | "descriptions" | "tags" | "settings">("search");
+export const currentPage = writable<"search" | "descriptions" | "tags" | "settings" | "logs">(
+  "search",
+);
 export const processedCount = writable<number>(0);
 export const editMediaId = writable<string | null>(null);
 export const isDraggingOut = writable(false);

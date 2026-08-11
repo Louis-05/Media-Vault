@@ -1,11 +1,14 @@
 <script lang="ts">
+  import { untrack } from "svelte";
+
   interface Props {
     onSearch: (query: string) => void;
     auto?: boolean;
     initialQuery?: string;
   }
   let { onSearch, auto = true, initialQuery = "" }: Props = $props();
-  let query = $state(initialQuery);
+  // Only the initial value is used; later changes to the prop are ignored.
+  let query = $state(untrack(() => initialQuery));
   let debounceTimeout: ReturnType<typeof setTimeout> | undefined;
 
   function handleInput() {
